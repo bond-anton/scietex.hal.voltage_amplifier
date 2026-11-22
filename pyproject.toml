@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scietex.hal.voltage_amplifier"
+dynamic = ["version"]
+description = "Scietex voltage amplifier HAL package"
+authors = [{ name = "Anton Bondarenko", email = "bond.anton@gmail.com" }]
+license = { file = "LICENSE" }
+readme = "README.md"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "msgspec ~= 0.20.0",
+    "scietex.hal.serial >= 2.5.0, < 3.0.0",
+    "pymodbus >=3.15,<3.16",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/bond-anton/scietex.hal.voltage_amplifier"
+"Repository" = "https://github.com/bond-anton/scietex.hal.voltage_amplifier"
+"Bug Tracker" = "https://github.com/bond-anton/scietex.hal.voltage_amplifier/issues"
+
+# Registering the driver here would advertise a usable device to
+# `discover_drivers()`, which cannot happen while `DEVICE_MAP` is empty.
+# The driver stays reachable by direct import in the meantime.
+[project.entry-points."scietex.hal.voltage_amplifier.drivers"]
+
+[project.optional-dependencies]
+dev = ["tox>=4.46.0"]
+test = ["pytest", "pytest-asyncio"]
+lint = ["ruff", "ty"]
+
+[tool.setuptools.dynamic]
+version = { attr = "scietex.hal.voltage_amplifier.version.__version__" }
+
+[tool.setuptools.package-data]
+"scietex.hal.voltage_amplifier" = ["py.typed"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "W", "I", "B", "C4", "SIM", "UP", "PLC0415", "PLR0913", "PLR0917"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
