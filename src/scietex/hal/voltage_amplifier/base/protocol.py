@@ -39,6 +39,12 @@ reads ``capabilities.input_voltage`` and ``capabilities.output_voltage``
 directly. The gain is the only scalable quantity: the amplifier multiplies the
 input voltage by it, optionally filtering the signal and inverting the polarity.
 
+Measurement is an optional group of its own, advertised through
+``capabilities.measurement``: :meth:`get_statistics` reads the statistics window
+of the channel the device currently measures, without selecting a channel, and
+:meth:`capture` triggers an acquisition, waits for it to finish and returns the
+buffered points, so calling it changes device state rather than only reading it.
+
 Classes:
     VoltageAmplifierProtocol: The runtime-checkable protocol every voltage
         amplifier driver satisfies.
@@ -47,7 +53,7 @@ Classes:
 from typing import ClassVar, Protocol, runtime_checkable
 
 from .capabilities import FilterType, VoltageAmplifierCapabilities
-from .data import AmplifierState, FilterSetting
+from .data import AmplifierState, Capture, ChannelStatistics, FilterSetting
 
 
 @runtime_checkable
@@ -91,6 +97,16 @@ class VoltageAmplifierProtocol(Protocol):
         return bool(self.capabilities.invert_output)
 
     @property
+    def supports_statistics(self) -> bool:
+        """Whether the amplifier reports statistics for the measured channel."""
+        return bool(self.capabilities.measurement.statistics)
+
+    @property
+    def supports_capture(self) -> bool:
+        """Whether the amplifier can return a buffered waveform capture."""
+        return bool(self.capabilities.measurement.capture)
+
+    @property
     def can_set_gain(self) -> bool:
         """Whether the voltage gain can be written."""
         return self.capabilities.gain.gain.access.write
@@ -107,6 +123,11 @@ class VoltageAmplifierProtocol(Protocol):
     def can_set_invert_output(self) -> bool:
         """Whether output-polarity inversion can be written."""
         return self.capabilities.invert_output.write
+
+    @property
+    def can_trigger_capture(self) -> bool:
+        """Whether a waveform capture can be started."""
+        return self.capabilities.measurement.capture.write
 
     async def connect(self) -> None:
         """Open the transport to the amplifier."""
@@ -200,4 +221,36 @@ class VoltageAmplifierProtocol(Protocol):
         raise NotImplementedError(
             f"{type(self).__name__} does not implement set_inverted(); "
             "capability: invert_output"
+        )
+
+    async def get_statistics(self) -> ChannelStatistics:
+        """
+        Read the statistics window of the channel currently measured.
+
+        The channel is chosen by the device, not by this call, so the returned
+        ``channel`` field identifies which one the statistics describe.
+
+        Returns:
+            ChannelStatistics: The statistics, with a field ``None`` when no fresh
+                window or an inactive channel leaves it unknown.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement get_statistics(); "
+            "capability: measurement"
+        )
+
+    async def capture(self) -> Capture:
+        """
+        Trigger a waveform capture, wait for it and read the buffered points.
+
+        This call is not a passive read: it starts an acquisition on the device,
+        which may overwrite the previous buffer and occupy the measurement channel
+        until the capture finishes.
+
+        Returns:
+            Capture: The buffered points in physical volts.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement capture(); "
+            "capability: measurement"
         )

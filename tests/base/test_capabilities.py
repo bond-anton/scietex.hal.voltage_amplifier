@@ -11,6 +11,7 @@ try:
         FilterType,
         IndicationCapabilities,
         InputVoltageCapabilities,
+        MeasurementCapabilities,
         OutputVoltageCapabilities,
         SelectableCapabilities,
         VoltageAmplifierCapabilities,
@@ -23,6 +24,7 @@ except ModuleNotFoundError:
         FilterType,
         IndicationCapabilities,
         InputVoltageCapabilities,
+        MeasurementCapabilities,
         OutputVoltageCapabilities,
         SelectableCapabilities,
         VoltageAmplifierCapabilities,
@@ -56,6 +58,30 @@ def test_defaults_advertise_nothing():
     assert capabilities.filters.cutoff == Access(False, False)
     assert capabilities.output_overload.read is False
     assert capabilities.invert_output == Access(False, False)
+    assert capabilities.measurement.statistics == Access(False, False)
+    assert capabilities.measurement.capture == Access(False, False)
+    assert capabilities.measurement.max_capture_points == 0
+    assert capabilities.measurement.max_capture_averaging == 0
+
+
+@pytest.mark.parametrize(
+    ("measurement", "expected"),
+    [
+        (MeasurementCapabilities(), False),
+        (
+            MeasurementCapabilities(statistics=Access(read=True)),
+            True,
+        ),
+        (
+            MeasurementCapabilities(capture=Access(write=True)),
+            True,
+        ),
+    ],
+    ids=["empty", "statistics-only", "capture-only"],
+)
+def test_measurement_is_truthy_from_either_half(measurement, expected):
+    """Statistics or capture alone advertises the measurement group."""
+    assert bool(measurement) is expected
 
 
 def test_default_gain_capabilities_are_falsy_and_unenumerated():
@@ -182,6 +208,7 @@ def test_selectable_capabilities_preserve_options():
         VoltageGainCapabilities(gain=SelectableCapabilities(access=Access(read=True))),
         FilterCapabilities(types=(FilterType.LOW_PASS,)),
         IndicationCapabilities(read=True),
+        MeasurementCapabilities(statistics=Access(read=True)),
         VoltageAmplifierCapabilities(),
     ],
     ids=[
@@ -192,6 +219,7 @@ def test_selectable_capabilities_preserve_options():
         "gain",
         "filters",
         "indication",
+        "measurement",
         "voltage_amplifier",
     ],
 )
@@ -277,4 +305,5 @@ def test_current_amplifier_domains_are_dropped():
         "filters",
         "output_overload",
         "invert_output",
+        "measurement",
     ]

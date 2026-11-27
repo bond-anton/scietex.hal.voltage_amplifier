@@ -5,14 +5,15 @@ scale it by a selectable gain, and optionally filter the signal and invert the
 output polarity.
 
 The package is split in two layers. The capability model and the driver contract
-in `scietex.hal.voltage_amplifier.base` are complete and usable now: they
-describe what an amplifier can do, what it currently reads, and the asynchronous
-methods a driver implements. The vendor-neutral Modbus driver in
-`scietex.hal.voltage_amplifier.generic.modbus` is a skeleton: its structure, error
-handling and capability mapping are in place, but the device's register map has
-not been transcribed, so every register access raises `RegisterMapIncomplete`
-before any bus traffic starts. The driver is therefore not advertised through the
-`scietex.hal.voltage_amplifier.drivers` entry-point group either.
+in `scietex.hal.voltage_amplifier.base` describe what an amplifier can do, what it
+currently reads, and the asynchronous methods a driver implements.
+`scietex.hal.voltage_amplifier.ebic.modbus.v1` is a working driver for the
+EBIC_ADC booster over Modbus RTU, advertised as `ebic_modbus_v1_boost`. The
+vendor-neutral Modbus driver in `scietex.hal.voltage_amplifier.generic.modbus` is
+a skeleton: its structure, error handling and capability mapping are in place, but
+the device's register map has not been transcribed, so every register access
+raises `RegisterMapIncomplete` before any bus traffic starts. That driver is not
+advertised through the `scietex.hal.voltage_amplifier.drivers` entry-point group.
 
 ## Status
 
@@ -21,7 +22,8 @@ before any bus traffic starts. The driver is therefore not advertised through th
 | Capability model (`base.capabilities`) | Complete |
 | State snapshot (`base.data`) | Complete |
 | Driver contract (`base.protocol`) | Complete |
-| Driver registry (`registry`) | Complete, no driver advertised yet |
+| Driver registry (`registry`) | Complete, advertises `ebic_modbus_v1_boost` |
+| EBIC_ADC booster driver (`ebic.modbus.v1`) | Real device driver: inversion, measurement, statistics, capture, configuration |
 | Generic Modbus driver (`generic.modbus`) | Skeleton: register map missing |
 
 ## Install
@@ -80,9 +82,9 @@ async def apply_gain(amp: VoltageAmplifierProtocol, gain: float | None) -> None:
 asyncio.run(main(amplifier))
 ```
 
-`amplifier` is a driver instance. The repository ships no working hardware
-driver yet, so the object is supplied by the application, by a subclass that
-implements the optional methods, or by a test double.
+`amplifier` is a driver instance. The EBIC_ADC booster driver described below is
+a complete implementation; a caller that does not own that hardware supplies its
+own implementation or a test double.
 
 The filter and polarity controls follow the same two-step guard: ask the
 capability property, then call the coroutine.
@@ -133,6 +135,7 @@ whole set as a class attribute, so it is known before the instance connects.
 | Filters | `filters.types`, `filters.enabled`, `filters.cutoff` | `filters` | `supports_filters` | `can_set_filter` |
 | Output overload | `output_overload.read` | `output_overload` | `supports_output_overload` | not writable |
 | Invert output | `invert_output` | `inverted` | `supports_invert_output` | `can_set_invert_output` |
+| Measurement | `measurement.statistics`, `measurement.capture`, `measurement.max_capture_points`, `measurement.max_capture_averaging` | methods `get_statistics()`, `capture()` | `supports_statistics`, `supports_capture` | `can_trigger_capture` |
 
 The input range and the output swing are static geometry rather than controllable
 features, so they have no `supports_*` property: `capabilities.input_voltage` and
@@ -176,11 +179,99 @@ Some rules the model enforces:
   and the file to fill in.
 - `UnexpectedResponse` (an `OSError`) means a response cannot belong to the
   register it answers, such as a wrong register count.
+- `CaptureFailed` (a `RuntimeError`) means the device stopped a capture without
+  producing a buffer, a previous capture is still pending, or the capture metadata
+  changed while the block was read. The message names the stop reason and the HAL
+  error codes when the device reported them.
+- `CaptureTimeout` (a `RuntimeError`) means the capture buffer did not become
+  ready before the nominal duration plus the driver's margin.
 - `ValueError` comes from `max_input_voltage_v` for a non-positive gain, and from
   `resolve_driver` for an unknown driver name; the message lists the available
   names.
 
-## The Modbus driver
+## The EBIC_ADC booster driver
+
+`EBICModbusV1Booster` in `scietex.hal.voltage_amplifier.ebic.modbus.v1` drives the
+EBIC Boost Control board, whose EBIC_ADC firmware exposes the amplifier over
+Modbus RTU. The class is a `scietex.hal.serial.RS485Client` subclass, so the shared
+client opens the port once per operation and `connect()` has nothing to open. It
+is advertised through the driver registry as `ebic_modbus_v1_boost`, so
+`registry.resolve_driver("ebic_modbus_v1_boost")` returns the class.
+
+```python
+import asyncio
+
+from scietex.hal.serial import ModbusSerialConnectionConfig
+from scietex.hal.voltage_amplifier.ebic.modbus.v1 import EBICModbusV1Booster
+
+serial_config = ModbusSerialConnectionConfig(
+    port="/dev/ttyUSB0",
+    baudrate=19200,
+    framer="RTU",
+)
+booster = EBICModbusV1Booster(serial_config, address=2)
+
+
+async def main() -> None:
+    await booster.connect()
+    try:
+        state = await booster.read_data()
+        print(state.output_voltage_v, state.output_overload, state.inverted)
+
+        if not await booster.get_inverted():
+            await booster.set_inverted(True)
+
+        statistics = await booster.get_statistics()
+        print(statistics.channel, statistics.mean_v, statistics.rms_v)
+
+        await booster.select_channel(1)
+        await booster.set_averaging(64)
+        await booster.set_rate_mode(1)
+        capture = await booster.capture()
+        print(capture.channel, len(capture.points), capture.duration_s)
+    finally:
+        await booster.close()
+
+
+asyncio.run(main())
+```
+
+The default address is 2, the factory address of an empty EEPROM, and the default
+baud rate is 19200. Both are persisted settings the device reports through
+`read_communication_settings`.
+
+Every analog value is reported as a 12-bit ADC code or a pin millivolt reading and
+scaled through the board's external divider:
+
+- the divider ratio is 0.6, so 5 V at the input connector is 3 V at the ADC pin;
+- the ADC reference is 3.3 V over 4095 codes, which makes the input range
+  0-5.5 V (`capabilities.output_voltage.max_v`);
+- `BoosterTuning(divider_ratio=...)` overrides the ratio for a differently divided
+  board, and `booster.divider_ratio` reads it back.
+
+The driver reports inversion (`get_inverted`/`set_inverted`), the state snapshot
+(`read_data`), the statistics window of the measured channel (`get_statistics`),
+capture (`capture`, `trigger_capture`, `read_capture_metadata`), identity and status
+(`read_identity`, `read_status`) and the acquisition and communication settings
+(`read_acquisition_settings`, `read_communication_settings`, `select_channel`,
+`set_averaging`, `set_rate_mode`). A capture returns 256 points of the channel the
+device captured, in physical volts, with the averaging depth, sample rate and block
+number the device reported; the call waits for the device and raises
+`CaptureTimeout` or `CaptureFailed` when the buffer never becomes ready or the
+device reports an error.
+
+The firmware has no gain or filter stage, so `capabilities.gain` and
+`capabilities.filters` are empty, `supports_gain` and `supports_filters` are
+`False`, and the corresponding protocol methods raise `NotImplementedError`.
+
+Two setters write to the device EEPROM and restart the firmware:
+`set_slave_address` and `set_baud_index` acknowledge at the old settings, wait
+`REBOOT_DELAY_S` and then require the new address or baud rate. Both raise
+`ValueError` when the transport timeout is shorter than the 5 s an EEPROM write
+needs; the instance adopts the new setting after the delay, so later accessors
+address the restarted device at it.
+
+## The generic Modbus driver
 
 `GenericModbusVoltageAmplifier` is a `scietex.hal.serial.RS485Client` subclass, so
 the shared client opens the port once per operation and `connect()` has nothing to
@@ -233,9 +324,8 @@ is transcribed.
 overload as `None` and an unrecognised filter code as an unknown entry rather than
 guessing a bit mask or a code.
 
-Because the driver has no entry point, `registry.discover_drivers()` returns an
-empty mapping and `registry.resolve_driver("...")` raises `ValueError`. Until the
-device is identified the driver is reachable by direct import only.
+Because the generic driver is not advertised, `registry.discover_drivers()` lists
+only `ebic_modbus_v1_boost`; the generic driver stays reachable by direct import.
 
 ## Testing
 
@@ -243,8 +333,8 @@ device is identified the driver is reachable by direct import only.
 pytest tests -q
 ```
 
-The suite drives in-memory amplifiers and asserts that the Modbus skeleton keeps
-the port closed; it needs no hardware and never opens a serial port.
+The suite drives the EBIC driver through a stub transport and the in-memory
+amplifiers; it needs no hardware and never opens a serial port.
 
 Other checks:
 

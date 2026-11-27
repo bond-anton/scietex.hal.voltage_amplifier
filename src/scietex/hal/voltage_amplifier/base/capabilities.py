@@ -30,6 +30,7 @@ Classes:
     VoltageGainCapabilities: Gain selection with the bounds it accepts.
     FilterCapabilities: Signal-filter surface.
     IndicationCapabilities: A read-only status flag.
+    MeasurementCapabilities: Statistics and waveform-capture surface.
     VoltageAmplifierCapabilities: The complete capability set for one amplifier.
 """
 
@@ -238,6 +239,42 @@ class IndicationCapabilities:
 
 
 @dataclass(frozen=True, slots=True)
+class MeasurementCapabilities:
+    """
+    Statistics and waveform-capture surface.
+
+    Statistics summarise the channel the device currently measures; they are
+    readable only, because the window is a device-side computation rather than a
+    setting. Capture is a buffered acquisition: when the device can be told to
+    start one, ``capture.write`` is set and the trigger is a write, while
+    ``capture.read`` says the resulting points can be read back.
+
+    The two limits are static geometry in the same sense as the voltage ranges:
+    they describe what the device buffers, not what it currently holds. A limit
+    of zero means the driver does not know it, not that the device can capture
+    nothing; the corresponding ``Access`` bit is what advertises the feature.
+
+    Attributes:
+        statistics (Access): Whether the statistics window can be read.
+        capture (Access): Whether a capture can be read and whether a trigger can
+            be written.
+        max_capture_points (int): Largest number of points one capture returns, or
+            ``0`` when the driver does not know the limit.
+        max_capture_averaging (int): Largest averaging depth the device accepts,
+            or ``0`` when the driver does not know the limit.
+    """
+
+    statistics: Access = field(default_factory=Access)
+    capture: Access = field(default_factory=Access)
+    max_capture_points: int = 0
+    max_capture_averaging: int = 0
+
+    def __bool__(self) -> bool:
+        """Return whether statistics or capture is advertised."""
+        return bool(self.statistics) or bool(self.capture)
+
+
+@dataclass(frozen=True, slots=True)
 class VoltageAmplifierCapabilities:
     """
     The complete capability set for one amplifier.
@@ -260,6 +297,8 @@ class VoltageAmplifierCapabilities:
         filters (FilterCapabilities): Signal-filter surface.
         output_overload (IndicationCapabilities): Output-overload flag.
         invert_output (Access): Whether the output polarity can be read and set.
+        measurement (MeasurementCapabilities): Statistics and waveform-capture
+            surface.
     """
 
     gain: VoltageGainCapabilities = field(default_factory=VoltageGainCapabilities)
@@ -274,6 +313,9 @@ class VoltageAmplifierCapabilities:
         default_factory=IndicationCapabilities
     )
     invert_output: Access = field(default_factory=Access)
+    measurement: MeasurementCapabilities = field(
+        default_factory=MeasurementCapabilities
+    )
 
     def max_output_swing_v(self) -> float | None:
         """

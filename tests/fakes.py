@@ -14,11 +14,14 @@ try:
     from src.scietex.hal.voltage_amplifier.base import (
         Access,
         AmplifierState,
+        Capture,
+        ChannelStatistics,
         FilterCapabilities,
         FilterSetting,
         FilterType,
         IndicationCapabilities,
         InputVoltageCapabilities,
+        MeasurementCapabilities,
         OutputVoltageCapabilities,
         SelectableCapabilities,
         VoltageAmplifierCapabilities,
@@ -29,11 +32,14 @@ except ModuleNotFoundError:
     from scietex.hal.voltage_amplifier.base import (
         Access,
         AmplifierState,
+        Capture,
+        ChannelStatistics,
         FilterCapabilities,
         FilterSetting,
         FilterType,
         IndicationCapabilities,
         InputVoltageCapabilities,
+        MeasurementCapabilities,
         OutputVoltageCapabilities,
         SelectableCapabilities,
         VoltageAmplifierCapabilities,
@@ -51,9 +57,14 @@ class FakeAmplifier(VoltageAmplifierProtocol):
         self,
         capabilities: VoltageAmplifierCapabilities,
         initial_state: AmplifierState,
+        *,
+        statistics: ChannelStatistics | None = None,
+        capture: Capture | None = None,
     ) -> None:
         self.capabilities = capabilities
         self._state = initial_state
+        self._statistics = statistics
+        self._capture = capture
         self._connected = False
 
     async def connect(self) -> None:
@@ -122,6 +133,18 @@ class FakeAmplifier(VoltageAmplifierProtocol):
         self._require_write(self.capabilities.invert_output, "set_inverted")
         self._state = replace(self._state, inverted=inverted)
 
+    async def get_statistics(self) -> ChannelStatistics:
+        self._require_read(self.capabilities.measurement.statistics, "get_statistics")
+        if self._statistics is None:
+            return ChannelStatistics()
+        return self._statistics
+
+    async def capture(self) -> Capture:
+        self._require_write(self.capabilities.measurement.capture, "capture")
+        if self._capture is None:
+            return Capture()
+        return self._capture
+
 
 def full_amplifier() -> FakeAmplifier:
     """An amplifier that advertises and reports every modelled feature."""
@@ -146,6 +169,12 @@ def full_amplifier() -> FakeAmplifier:
         ),
         output_overload=IndicationCapabilities(read=True),
         invert_output=read_write,
+        measurement=MeasurementCapabilities(
+            statistics=Access(read=True),
+            capture=read_write,
+            max_capture_points=256,
+            max_capture_averaging=4000,
+        ),
     )
     state = AmplifierState(
         input_voltage_v=1.0,
@@ -162,7 +191,25 @@ def full_amplifier() -> FakeAmplifier:
         output_overload=False,
         inverted=False,
     )
-    return FakeAmplifier(capabilities, state)
+    statistics = ChannelStatistics(
+        channel=1,
+        mean_v=1.0,
+        min_v=0.5,
+        max_v=1.5,
+        rms_v=1.02,
+        ac_rms_v=0.2,
+        peak_to_peak_v=1.0,
+        rail_samples=0,
+        window_samples=781,
+    )
+    capture = Capture(
+        channel=1,
+        points=(0.0,) * 256,
+        averaging=781,
+        sample_rate_hz=100_000.0,
+        block_number=1,
+    )
+    return FakeAmplifier(capabilities, state, statistics=statistics, capture=capture)
 
 
 def read_only_gain_amplifier() -> FakeAmplifier:

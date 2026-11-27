@@ -128,6 +128,8 @@ _OPTIONAL_CALLS = [
     ("set_filter", (FilterSetting(type=FilterType.LOW_PASS),)),
     ("get_inverted", ()),
     ("set_inverted", (True,)),
+    ("get_statistics", ()),
+    ("capture", ()),
 ]
 
 _SUPPORT_PROPERTIES = [
@@ -135,20 +137,23 @@ _SUPPORT_PROPERTIES = [
     "supports_filters",
     "supports_output_overload",
     "supports_invert_output",
+    "supports_statistics",
+    "supports_capture",
 ]
 
 _CAN_PROPERTIES = [
     "can_set_gain",
     "can_set_filter",
     "can_set_invert_output",
+    "can_trigger_capture",
 ]
 
 
 def test_optional_call_table_covers_every_optional_method():
-    """The table matches the protocol exactly: six optional coroutines."""
+    """The table matches the protocol exactly: eight optional coroutines."""
     table_names = [name for name, _ in _OPTIONAL_CALLS]
 
-    assert len(table_names) == len(set(table_names)) == 6
+    assert len(table_names) == len(set(table_names)) == 8
     assert set(table_names) == _protocol_methods()
     assert all(
         inspect.iscoroutinefunction(getattr(MinimalAmplifier, name))
@@ -157,9 +162,9 @@ def test_optional_call_table_covers_every_optional_method():
 
 
 def test_property_tables_cover_every_property():
-    """Four ``supports_*`` and three ``can_*`` properties, no more, no less."""
-    assert len(_SUPPORT_PROPERTIES) == 4
-    assert len(_CAN_PROPERTIES) == 3
+    """Six ``supports_*`` and four ``can_*`` properties, no more, no less."""
+    assert len(_SUPPORT_PROPERTIES) == 6
+    assert len(_CAN_PROPERTIES) == 4
     assert set(_SUPPORT_PROPERTIES + _CAN_PROPERTIES) == _protocol_properties()
 
 
@@ -183,6 +188,8 @@ async def test_optional_method_default_raises_not_implemented(method_name, args)
         ("set_filter", "filters"),
         ("get_inverted", "invert_output"),
         ("set_inverted", "invert_output"),
+        ("get_statistics", "measurement"),
+        ("capture", "measurement"),
     ],
 )
 async def test_optional_messages_name_their_capability(method_name, capability):
@@ -295,3 +302,28 @@ async def test_fake_gain_requires_write_access():
 
     with pytest.raises(NotImplementedError, match="no write capability"):
         await amplifier.set_gain(100.0)
+
+
+@pytest.mark.asyncio
+async def test_full_fake_returns_canned_measurement_values():
+    """The full fake reports the statistics and capture it advertises."""
+    amplifier = full_amplifier()
+
+    statistics = await amplifier.get_statistics()
+    capture = await amplifier.capture()
+
+    assert statistics.channel == 1
+    assert statistics.window_samples == 781
+    assert len(capture.points) == 256
+    assert capture.averaging == 781
+
+
+@pytest.mark.asyncio
+async def test_fake_measurement_requires_its_capability():
+    """The fake gates statistics on the read half and capture on the write half."""
+    amplifier = minimal_amplifier()
+
+    with pytest.raises(NotImplementedError, match="no read capability"):
+        await amplifier.get_statistics()
+    with pytest.raises(NotImplementedError, match="no write capability"):
+        await amplifier.capture()
