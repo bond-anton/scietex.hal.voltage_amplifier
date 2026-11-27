@@ -28,11 +28,14 @@ advertised through the `scietex.hal.voltage_amplifier.drivers` entry-point group
 
 ## Install
 
+The package is published on PyPI as `scietex.hal.voltage_amplifier`; the current
+release is 0.2.0:
+
 ```bash
 pip install scietex.hal.voltage_amplifier
 ```
 
-The package is not on PyPI yet; install from a clone in the meantime:
+You can also install from a clone:
 
 ```bash
 git clone https://github.com/bond-anton/scietex.hal.voltage_amplifier.git
