@@ -2,9 +2,11 @@
 
 Modules:
     client: The RS485/RTU driver over the request layer.
+    client_tcp: The Modbus/TCP transport over the request layer.
     constants: Wire register, coil, ADC geometry and timing constants.
     decode: Decoders from register words to physical volts.
     errors: Request and capture failures.
+    exceptions: Gateway outcomes the TCP transport names.
     identity: Decodes the device identity from input registers.
     requests: The transport-independent request layer.
     settings: Decoded settings, status and capture metadata.
@@ -12,6 +14,7 @@ Modules:
 Exports:
     BoosterTuning: Divider, transaction gap and read attempts.
     EBICModbusV1Booster: The EBIC_ADC driver over RS485/RTU.
+    EBICModbusV1BoosterTcp: The EBIC_ADC transport over Modbus/TCP.
     BoosterRequests: The transport-independent request layer.
     DeviceIdentity: The vendor, product, version and serial number.
     Capture: One buffered waveform acquisition in physical volts.
@@ -25,6 +28,8 @@ Exports:
     UnexpectedResponse: A response cannot belong to its request.
     CaptureTimeout: A capture did not finish within its deadline.
     CaptureFailed: A capture stopped without producing a buffer.
+    GatewayBusy: The gateway or device was busy; the request is retryable.
+    GatewayTargetFailed: The gateway could not reach the device behind it.
     decode_identity: Decode the identity block.
     decode_channel_statistics: Decode one channel's statistics block.
     decode_capture_column: Decode one channel of a capture buffer.
@@ -36,6 +41,7 @@ Exports:
 
 from ....base import Capture
 from .client import BoosterTuning, EBICModbusV1Booster
+from .client_tcp import EBICModbusV1BoosterTcp
 from .constants import DEFAULT_DIVIDER_RATIO
 from .decode import (
     decode_capture_column,
@@ -46,6 +52,7 @@ from .decode import (
     u32,
 )
 from .errors import CaptureFailed, CaptureTimeout, UnexpectedResponse
+from .exceptions import GatewayBusy, GatewayTargetFailed
 from .identity import DeviceIdentity, decode_identity
 from .requests import BoosterRequests
 from .settings import (
@@ -71,6 +78,9 @@ __all__ = [
     "DeviceIdentity",
     "DeviceStatus",
     "EBICModbusV1Booster",
+    "EBICModbusV1BoosterTcp",
+    "GatewayBusy",
+    "GatewayTargetFailed",
     "StopReason",
     "UnexpectedResponse",
     "decode_capture_column",

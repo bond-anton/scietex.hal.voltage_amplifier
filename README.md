@@ -8,12 +8,14 @@ The package is split in two layers. The capability model and the driver contract
 in `scietex.hal.voltage_amplifier.base` describe what an amplifier can do, what it
 currently reads, and the asynchronous methods a driver implements.
 `scietex.hal.voltage_amplifier.ebic.modbus.v1` is a working driver for the
-EBIC_ADC booster over Modbus RTU, advertised as `ebic_modbus_v1_boost`. The
-vendor-neutral Modbus driver in `scietex.hal.voltage_amplifier.generic.modbus` is
-a skeleton: its structure, error handling and capability mapping are in place, but
-the device's register map has not been transcribed, so every register access
-raises `RegisterMapIncomplete` before any bus traffic starts. That driver is not
-advertised through the `scietex.hal.voltage_amplifier.drivers` entry-point group.
+EBIC_ADC booster over Modbus RTU, advertised as `ebic_modbus_v1_boost`, plus a
+Modbus/TCP driver for the same board behind a gateway, advertised as
+`ebic_modbus_tcp_v1_boost`. The vendor-neutral Modbus driver in
+`scietex.hal.voltage_amplifier.generic.modbus` is a skeleton: its structure, error
+handling and capability mapping are in place, but the device's register map has
+not been transcribed, so every register access raises `RegisterMapIncomplete`
+before any bus traffic starts. That driver is not advertised through the
+`scietex.hal.voltage_amplifier.drivers` entry-point group.
 
 ## Status
 
@@ -22,14 +24,15 @@ advertised through the `scietex.hal.voltage_amplifier.drivers` entry-point group
 | Capability model (`base.capabilities`) | Complete |
 | State snapshot (`base.data`) | Complete |
 | Driver contract (`base.protocol`) | Complete |
-| Driver registry (`registry`) | Complete, advertises `ebic_modbus_v1_boost` |
+| Driver registry (`registry`) | Complete, advertises `ebic_modbus_v1_boost` and `ebic_modbus_tcp_v1_boost` |
 | EBIC_ADC booster driver (`ebic.modbus.v1`) | Real device driver: inversion, measurement, statistics, capture, configuration |
+| EBIC_ADC Modbus/TCP driver (`ebic.modbus.v1.client_tcp`) | Real device driver over a TCP gateway: the serial driver's device layer on a TCP transport |
 | Generic Modbus driver (`generic.modbus`) | Skeleton: register map missing |
 
 ## Install
 
 The package is published on PyPI as `scietex.hal.voltage_amplifier`; the current
-release is 0.2.0:
+release is 0.3.0:
 
 ```bash
 pip install scietex.hal.voltage_amplifier
@@ -52,11 +55,13 @@ Requirements:
 
 ## Usage
 
-Every driver satisfies `VoltageAmplifierProtocol`: `connect`, `close` and
+Every device driver implements `VoltageAmplifierProtocol`: `connect`, `close` and
 `read_data` are mandatory coroutines, and every optional control method is a
 coroutine too. The `supports_*` and `can_*` properties are synchronous and read
 straight from `capabilities`, so a caller rejects an unsupported command before
-dispatching it.
+dispatching it. The EBIC_ADC Modbus/TCP entry point is a full device driver: it
+inherits the serial driver's device layer, so `read_data`, `capture`,
+`get_statistics` and the settings accessors behave identically over a gateway.
 
 ```python
 import asyncio
@@ -188,6 +193,12 @@ Some rules the model enforces:
   error codes when the device reported them.
 - `CaptureTimeout` (a `RuntimeError`) means the capture buffer did not become
   ready before the nominal duration plus the driver's margin.
+- `GatewayBusy` (a `ModbusOperationError`) means the gateway or the device behind
+  it reported exception code 6, server device busy. The request was not served
+  and may succeed shortly.
+- `GatewayTargetFailed` (a `ModbusOperationError`) means the gateway reported
+  exception code 11, target device failed to respond. The gateway reached the
+  bus but not the board, so a write may still have reached the device.
 - `ValueError` comes from `max_input_voltage_v` for a non-positive gain, and from
   `resolve_driver` for an unknown driver name; the message lists the available
   names.
@@ -274,6 +285,48 @@ Two setters write to the device EEPROM and restart the firmware:
 needs; the instance adopts the new setting after the delay, so later accessors
 address the restarted device at it.
 
+### The EBIC_ADC booster over Modbus/TCP
+
+`EBICModbusV1BoosterTcp` reaches the same board through a Modbus/TCP gateway that
+forwards requests to the RS485 bus. It is advertised as
+`ebic_modbus_tcp_v1_boost`; the constructor takes the gateway endpoint instead of
+a serial configuration:
+
+```python
+from scietex.hal.voltage_amplifier.ebic.modbus.v1 import EBICModbusV1BoosterTcp
+
+booster = EBICModbusV1BoosterTcp("192.168.1.50", port=502, address=2)
+```
+
+The class is `EBICModbusV1BoosterTcp(EBICModbusV1Booster)`: it inherits the
+whole device layer, so the state snapshot, statistics, capture, identity,
+status and settings behave exactly as over RS485, and only the transport is
+replaced. `BoosterRequests` builds and validates every request unchanged, so the
+register and coil behaviour matches the serial driver. The serial client is never
+constructed -- there is no port and no `con_params` -- and the request layer is
+wired straight to `execute()`. The connection is opened lazily on the first
+request (or on an explicit `connect()`) and reopened after a drop; `close()`
+releases it and is safe to repeat. pymodbus itself is asked for no retries by
+default, because a replayed write after an ambiguous drop may apply twice.
+
+The t3.5 transaction gap belongs to the RS485 wire, so it is forced to zero,
+while `BoosterTuning.divider_ratio` and `read_attempts` still apply. The gateway
+owns the RS485 link, so `set_baud_index` raises `NotImplementedError` and the
+gateway's serial port must be reconfigured instead; `set_slave_address` works as
+on serial, including the EEPROM timeout guard, and later requests carry the new
+address (a gateway with a fixed device map must be reconfigured too).
+
+Two gateway outcomes get named errors: exception code 11 (the gateway could not
+reach the device) raises `GatewayTargetFailed`, and code 6 (device busy) raises
+`GatewayBusy`, both subclasses of `ModbusOperationError`. Every other exception
+code and every pymodbus transport failure raises the base error, and the
+`raise_on_error=False` and `no_response_expected` flags behave as on serial.
+
+Because the serial base is inherited, `con_params` is unavailable and raises
+`NotImplementedError`; pass the endpoint, timeout and retries to the
+constructor. The `label` setter only stores the label instead of rebuilding a
+serial client.
+
 ## The generic Modbus driver
 
 `GenericModbusVoltageAmplifier` is a `scietex.hal.serial.RS485Client` subclass, so
@@ -328,7 +381,8 @@ overload as `None` and an unrecognised filter code as an unknown entry rather th
 guessing a bit mask or a code.
 
 Because the generic driver is not advertised, `registry.discover_drivers()` lists
-only `ebic_modbus_v1_boost`; the generic driver stays reachable by direct import.
+`ebic_modbus_tcp_v1_boost` and `ebic_modbus_v1_boost`; the generic driver stays
+reachable by direct import.
 
 ## Testing
 
@@ -336,8 +390,9 @@ only `ebic_modbus_v1_boost`; the generic driver stays reachable by direct import
 pytest tests -q
 ```
 
-The suite drives the EBIC driver through a stub transport and the in-memory
-amplifiers; it needs no hardware and never opens a serial port.
+The suite drives the EBIC drivers through a stub serial transport, a fake
+Modbus/TCP gateway and the in-memory amplifiers; it needs no hardware and never
+opens a port or a socket.
 
 Other checks:
 

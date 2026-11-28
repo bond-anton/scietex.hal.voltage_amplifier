@@ -34,6 +34,7 @@ dependencies = [
 "Bug Tracker" = "https://github.com/bond-anton/scietex.hal.voltage_amplifier/issues"
 
 [project.entry-points."scietex.hal.voltage_amplifier.drivers"]
+ebic_modbus_tcp_v1_boost = "scietex.hal.voltage_amplifier.ebic.modbus.v1:EBICModbusV1BoosterTcp"
 ebic_modbus_v1_boost = "scietex.hal.voltage_amplifier.ebic.modbus.v1:EBICModbusV1Booster"
 
 [project.optional-dependencies]
